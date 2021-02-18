@@ -4,7 +4,7 @@ package com.socioart;
  * Hello world!
  *
  */
-public class App 
+public class XlsxTemplate
 {
     public static void main( String[] args )
     {
