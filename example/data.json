@@ -1,0 +1,9 @@
+{
+  "name": "labocho",
+  "works": [
+    {"name": "foo", "description": "Foo\nBar"},
+    {"name": "bar", "description": "Foo\nBar"},
+    {"name": "baz", "description": "Foo\nBar"}
+  ],
+  "awards": []
+}
