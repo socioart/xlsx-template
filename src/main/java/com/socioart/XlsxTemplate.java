@@ -108,6 +108,7 @@ public class XlsxTemplate
 
         private int processEachDirectiveRow(Sheet sheet, Row template_row, EachDirective directive) {
             int template_row_index = template_row.getRowNum();
+            short template_row_height = template_row.getHeight();
 
             ArrayList<CellRangeAddress> merged_regions_in_row = new ArrayList<CellRangeAddress>();
             for(CellRangeAddress mr: sheet.getMergedRegions()) {
@@ -123,6 +124,7 @@ public class XlsxTemplate
 
                 sheet.shiftRows(row_index, sheet.getLastRowNum(), 1, true, true);
                 Row new_row = sheet.createRow(row_index);
+                new_row.setHeight(template_row_height);
                 copyRow(template_row, new_row);
 
                 // Copy merged regions
@@ -302,6 +304,9 @@ public class XlsxTemplate
             String image_path = args[4];
 
             replacePicture(workbook, output, cell_ref, image_path);
+        } else {
+            System.err.print("Unknown subcommand");
+            System.exit(1);
         }
     }
 
