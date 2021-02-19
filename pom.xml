@@ -6,7 +6,7 @@
 
   <groupId>com.socioart</groupId>
   <artifactId>xlsx-template</artifactId>
-  <version>1.0-SNAPSHOT</version>
+  <version>0.1.0</version>
 
   <name>xlsx-template</name>
   <!-- FIXME change it to the project's website -->
