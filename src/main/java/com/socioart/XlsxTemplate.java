@@ -5,15 +5,10 @@ import org.apache.poi.xssf.usermodel.*;
 import java.io.*;
 import java.util.Iterator;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
 import org.json.*;
 
-/**
- * Hello world!
- *
- */
 public class XlsxTemplate
 {
     static class Template {
@@ -65,62 +60,7 @@ public class XlsxTemplate
                     if (sheet.getLastRowNum() < row_index) break;
 
                     Row row = sheet.getRow(row_index);
-                    if (row == null) {
-                        row_index += 1;
-                        continue;
-                    }
-
-                    Cell metaCell = row.getCell(0);
-                    Directive directive = null;
-
-                    if (metaCell != null && metaCell.getCellType() == CellType.STRING) {
-                        directive = parseDirective(metaCell.getStringCellValue());
-                        metaCell.setBlank();
-                    }
-
-                    if (directive instanceof IfDirective) {
-                        if (!isTruthy(((IfDirective)directive).variable, _variables)) {
-                            removeRow(sheet, row);
-                            continue; //削除したので row_index 増やさず次へ
-                        }
-                    } else if (directive instanceof EachDirective) {
-                        Row template_row = row;
-
-                        Iterator<CellRangeAddress> merged_regions_iterator = sheet.getMergedRegions().iterator();
-                        ArrayList<CellRangeAddress> merged_regions_in_row = new ArrayList<CellRangeAddress>();
-
-                        while(merged_regions_iterator.hasNext()) {
-                            CellRangeAddress mr = merged_regions_iterator.next();
-                            if (mr.getFirstRow() == row_index && mr.getLastRow() == row_index) merged_regions_in_row.add(mr);
-                        }
-
-                        JSONArray items = digArray(((EachDirective)directive).variable, _variables);
-                        Iterator<Object> items_iterator = items.iterator();
-                        while (items_iterator.hasNext()) {
-                            JSONObject item = (JSONObject)items_iterator.next();
-                            row_index += 1;
-                            sheet.shiftRows(row_index, sheet.getLastRowNum(), 1, true, true);
-                            Row new_row = sheet.createRow(row_index);
-                            copyRow(template_row, new_row);
-
-                            // Copy merged regions
-                            Iterator<CellRangeAddress> merged_regions_in_row_iterator = merged_regions_in_row.iterator();
-                            while(merged_regions_in_row_iterator.hasNext()) {
-                                CellRangeAddress mr = merged_regions_in_row_iterator.next();
-                                sheet.addMergedRegion(
-                                    new CellRangeAddress(row_index, row_index, mr.getFirstColumn(), mr.getLastColumn())
-                                );
-                            }
-
-                            replaceCells(new_row, item);
-                        }
-
-                        removeRow(sheet, template_row);
-                        continue; //削除したので row_index 増やさず次へ
-                    }
-
-                    replaceCells(row, _variables);
-                    row_index += 1;
+                    row_index += processTemplateRow(sheet, row) + 1;
                 }
 
                 sheet.setColumnHidden(0, true); // hide meta cells
@@ -130,10 +70,76 @@ public class XlsxTemplate
             _template.write(fos);
         }
 
+        // return number of inserted row (maybe negative)
+        private int processTemplateRow(Sheet sheet, Row row) {
+            if (row == null) return 0;
+
+            Cell metaCell = row.getCell(0);
+            Directive directive = null;
+
+            if (metaCell != null && metaCell.getCellType() == CellType.STRING) {
+                directive = parseDirective(metaCell.getStringCellValue());
+                metaCell.setBlank();
+            }
+
+            if (directive instanceof IfDirective) {
+                return processIfDirectiveRow(sheet, row, (IfDirective)directive);
+            } else if (directive instanceof EachDirective) {
+                return processEachDirectiveRow(sheet, row, (EachDirective)directive);
+            } else {
+                return processNoDirectiveRow(sheet, row);
+            }
+        }
+
+        private int processNoDirectiveRow(Sheet sheet, Row row) {
+            replaceCells(row, _variables);
+            return 0;
+        }
+
+        private int processIfDirectiveRow(Sheet sheet, Row row, IfDirective directive) {
+            if (!isTruthy(((IfDirective)directive).variable, _variables)) {
+                removeRow(sheet, row);
+                return -1; // 削除したので -1
+            } else {
+                return processNoDirectiveRow(sheet, row);
+            }
+        }
+
+        private int processEachDirectiveRow(Sheet sheet, Row template_row, EachDirective directive) {
+            int template_row_index = template_row.getRowNum();
+
+            ArrayList<CellRangeAddress> merged_regions_in_row = new ArrayList<CellRangeAddress>();
+            for(CellRangeAddress mr: sheet.getMergedRegions()) {
+                if (mr.getFirstRow() == template_row_index && mr.getLastRow() == template_row_index) merged_regions_in_row.add(mr);
+            }
+
+            JSONArray items = digArray(((EachDirective)directive).variable, _variables);
+            int row_index = template_row_index;
+
+            for(Object obj: items) {
+                JSONObject item = (JSONObject)obj;
+                row_index += 1;
+
+                sheet.shiftRows(row_index, sheet.getLastRowNum(), 1, true, true);
+                Row new_row = sheet.createRow(row_index);
+                copyRow(template_row, new_row);
+
+                // Copy merged regions
+                for(CellRangeAddress mr: merged_regions_in_row) {
+                    sheet.addMergedRegion(
+                        new CellRangeAddress(row_index, row_index, mr.getFirstColumn(), mr.getLastColumn())
+                    );
+                }
+
+                replaceCells(new_row, item);
+            }
+
+            removeRow(sheet, template_row);
+            return items.length() - 1; // アイテムの数 - テンプレートの行
+        }
+
         // https://stackoverflow.com/questions/5785724/how-to-insert-a-row-between-two-rows-in-an-existing-excel-with-hssf-apache-poi
         private void copyRow(Row src, Row dest) {
-            System.err.println(dest.toString());
-
             for (int i = 0; i < src.getLastCellNum(); i++) {
                 Cell src_cell = src.getCell(i);
                 if (src_cell == null) continue;
@@ -197,8 +203,7 @@ public class XlsxTemplate
                         String value = cell.getStringCellValue();
                         Matcher m = _pattern_variable.matcher(value);
                         if (m.find()) {
-                            String variable = m.group(1);
-                            String query = "/" + variable.replaceAll("\\.", "/");
+                            String query = toJSONPointer(m.group(1));
                             cell.setCellValue(digString(query, locals));
                         }
                         break;
@@ -236,15 +241,19 @@ public class XlsxTemplate
 
             m = _pattern_if.matcher(v);
             if (m.find()) {
-                return new IfDirective("/" + m.group(1).replaceAll("\\.", "/"));
+                return new IfDirective(toJSONPointer(m.group(1)));
             }
 
             m = _pattern_each.matcher(v);
             if (m.find()) {
-                return new EachDirective("/" + m.group(1).replaceAll("\\.", "/"));
+                return new EachDirective(toJSONPointer(m.group(1)));
             }
 
             return null;
+        }
+
+        private String toJSONPointer(String handlebarsVariableRef) {
+            return "/" + handlebarsVariableRef.replaceAll("\\.", "/");
         }
     }
 
