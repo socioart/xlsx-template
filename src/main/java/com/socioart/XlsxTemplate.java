@@ -2,6 +2,7 @@ package com.socioart;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.*;
 import org.apache.poi.xssf.usermodel.*;
+import org.apache.poi.ooxml.POIXMLDocumentPart;
 import java.io.*;
 import java.util.Iterator;
 import java.util.ArrayList;
@@ -262,9 +263,8 @@ public class XlsxTemplate
         FileInputStream input_fis;
         FileInputStream json_fis;
 
-        String input = args[0];
-        String output = args[1];
-        String json_file = args[2];
+        String subcommand = args[0];
+        String input = args[1];
 
         try {
             input_fis = new FileInputStream(input);
@@ -274,22 +274,92 @@ public class XlsxTemplate
             return;
         }
 
-        try {
-            json_fis = new FileInputStream(json_file);
-        } catch(FileNotFoundException e) {
-            System.err.println( "Data file not found" );
-            System.exit(1);
-            input_fis.close();
-            return;
-        }
-
-        JSONObject variables = new JSONObject(new String(json_fis.readAllBytes()));
-        json_fis.close();
-
         XSSFWorkbook workbook = new XSSFWorkbookFactory().create(input_fis);
+        input_fis.close();
 
-        Template template = new Template();
-        template.render(workbook, variables, output);
+        if (subcommand.equals("compile")) {
+            String output = args[2];
+            String json_file = args[3];
+
+            try {
+                json_fis = new FileInputStream(json_file);
+            } catch(FileNotFoundException e) {
+                System.err.println( "Data file not found" );
+                System.exit(1);
+                return;
+            }
+
+            JSONObject variables = new JSONObject(new String(json_fis.readAllBytes()));
+            json_fis.close();
+
+            Template template = new Template();
+            template.render(workbook, variables, output);
+        } else if (subcommand.equals("list-pictures")) {
+            listPictures(workbook);
+        } else if (subcommand.equals("replace-picture")) {
+            String output = args[2];
+            String cell_ref = args[3];
+            String image_path = args[4];
+
+            replacePicture(workbook, output, cell_ref, image_path);
+        }
     }
 
+    static private void replacePicture(Workbook workbook, String output, String cell_ref_string, String image_path) throws IOException {
+        CellReference cell_ref = new CellReference(cell_ref_string);
+        String sheet_name = cell_ref.getSheetName();
+
+        FileInputStream fis = new java.io.FileInputStream(image_path) ;
+        byte[] data = fis.readAllBytes();
+        fis.close();
+        int new_picture_index = workbook.addPicture(data, Workbook.PICTURE_TYPE_PNG);
+
+        Iterator<Sheet> sheets = workbook.sheetIterator();
+        while(sheets.hasNext()) {
+            Sheet sheet = sheets.next();
+            if (sheet_name != null && !sheet.getSheetName().equals(sheet_name)) continue;
+
+            XSSFDrawing drawing = (XSSFDrawing)sheet.getDrawingPatriarch();
+            if (drawing == null) continue;
+
+            for (XSSFShape shape : drawing.getShapes()){
+                if (!(shape instanceof XSSFPicture)) continue;
+                XSSFPicture picture = (XSSFPicture)shape;
+
+                XSSFClientAnchor xca = picture.getPreferredSize();
+                if (xca.getRow1() == cell_ref.getRow() && xca.getCol1() == cell_ref.getCol()) {
+                    drawing.createPicture(xca, new_picture_index);
+                }
+            }
+        }
+
+        FileOutputStream fos = new FileOutputStream(output);
+        workbook.write(fos);
+    }
+
+    static private void listPictures(Workbook workbook) {
+        System.out.println("cell,mime_type");
+
+        Iterator<Sheet> sheets = workbook.sheetIterator();
+        while(sheets.hasNext()) {
+            Sheet sheet = sheets.next();
+
+            XSSFDrawing drawing = (XSSFDrawing)sheet.getDrawingPatriarch();
+            if (drawing == null) continue;
+
+            for (XSSFShape shape : drawing.getShapes()){
+                if (!(shape instanceof XSSFPicture)) continue;
+                XSSFPicture picture = (XSSFPicture)shape;
+                XSSFPictureData picture_data = picture.getPictureData();
+
+                // 画像があるセルを取得
+                XSSFClientAnchor xca = picture.getPreferredSize();
+                CellReference cell_ref = new CellReference(sheet.getSheetName(), xca.getRow1(), xca.getCol1(), false, false);
+
+                // TODO: escape sheet name
+                // FIY: picture_data.getPackagePart().getPartName() to get xlsx path
+                System.out.println(cell_ref.formatAsString(true) + "," + picture_data.getMimeType());
+            }
+        }
+    }
 }
