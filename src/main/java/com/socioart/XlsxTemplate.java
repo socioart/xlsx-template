@@ -110,11 +110,6 @@ public class XlsxTemplate
             int template_row_index = template_row.getRowNum();
             short template_row_height = template_row.getHeight();
 
-            ArrayList<CellRangeAddress> merged_regions_in_row = new ArrayList<CellRangeAddress>();
-            for(CellRangeAddress mr: sheet.getMergedRegions()) {
-                if (mr.getFirstRow() == template_row_index && mr.getLastRow() == template_row_index) merged_regions_in_row.add(mr);
-            }
-
             JSONArray items = digArray(((EachDirective)directive).variable, _variables);
             int row_index = template_row_index;
 
@@ -122,23 +117,46 @@ public class XlsxTemplate
                 JSONObject item = (JSONObject)obj;
                 row_index += 1;
 
-                sheet.shiftRows(row_index, sheet.getLastRowNum(), 1, true, true);
-                Row new_row = sheet.createRow(row_index);
+                Row new_row = addRow(sheet, row_index);
                 new_row.setHeight(template_row_height);
                 copyRow(template_row, new_row);
-
-                // Copy merged regions
-                for(CellRangeAddress mr: merged_regions_in_row) {
-                    sheet.addMergedRegion(
-                        new CellRangeAddress(row_index, row_index, mr.getFirstColumn(), mr.getLastColumn())
-                    );
-                }
-
                 replaceCells(new_row, item);
             }
 
             removeRow(sheet, template_row);
             return items.length() - 1; // アイテムの数 - テンプレートの行
+        }
+
+        private Row addRow(Sheet sheet, int row_index) {
+            // Update merged cells
+            ArrayList<Integer> merged_region_indices_to_delete = new ArrayList<Integer>();
+            ArrayList<CellRangeAddress> merged_regions_to_add = new ArrayList<CellRangeAddress>();
+            int row_index_above = row_index - 1;
+
+            for (int i = 0; i < sheet.getNumMergedRegions(); i++) {
+                CellRangeAddress mr = sheet.getMergedRegion(i);
+                if (mr.getLastRow() < row_index_above || row_index_above < mr.getFirstRow()) continue;
+                if (mr.getFirstRow() == mr.getLastRow()) {
+                    merged_regions_to_add.add(
+                        new CellRangeAddress(row_index, row_index, mr.getFirstColumn(), mr.getLastColumn())
+                    );
+                    continue;
+                }
+
+                mr.setLastRow(mr.getLastRow() + 1);
+                merged_region_indices_to_delete.add(i);
+                merged_regions_to_add.add(mr);
+            }
+            sheet.removeMergedRegions(merged_region_indices_to_delete);
+
+            sheet.shiftRows(row_index, sheet.getLastRowNum(), 1, true, true);
+            Row new_row = sheet.createRow(row_index);
+
+            for (CellRangeAddress region: merged_regions_to_add) {
+                sheet.addMergedRegion(region);
+            }
+
+            return new_row;
         }
 
         // https://stackoverflow.com/questions/5785724/how-to-insert-a-row-between-two-rows-in-an-existing-excel-with-hssf-apache-poi
@@ -183,13 +201,31 @@ public class XlsxTemplate
 
             // Update merged cells
             ArrayList<Integer> merged_region_indices_to_delete = new ArrayList<Integer>();
+            ArrayList<CellRangeAddress> merged_regions_to_add = new ArrayList<CellRangeAddress>();
+
             for (int i = 0; i < sheet.getNumMergedRegions(); i++) {
                 CellRangeAddress mr = sheet.getMergedRegion(i);
+                if (mr.getLastRow() < row_index || row_index < mr.getFirstRow()) continue;
+
+                // Remove merged cells in the row
                 if (mr.getFirstRow() == row_index && mr.getLastRow() == row_index) {
                     merged_region_indices_to_delete.add(i);
+                    continue;
+                }
+
+                mr.setLastRow(mr.getLastRow() - 1);
+
+                // if region is not single cell, change and recreate.
+                merged_region_indices_to_delete.add(i);
+                if (mr.getNumberOfCells() != 1) {
+                    merged_regions_to_add.add(mr);
                 }
             }
+
             sheet.removeMergedRegions(merged_region_indices_to_delete);
+            for (CellRangeAddress region: merged_regions_to_add) {
+                sheet.addMergedRegion(region);
+            }
 
             sheet.removeRow(row); // remove row content
             sheet.shiftRows(row_index + 1, sheet.getLastRowNum(), -1);
@@ -271,7 +307,7 @@ public class XlsxTemplate
         try {
             input_fis = new FileInputStream(input);
         } catch(FileNotFoundException e) {
-            System.err.println( "Templatel file not found" );
+            System.err.println( "Template file not found" );
             System.exit(1);
             return;
         }
