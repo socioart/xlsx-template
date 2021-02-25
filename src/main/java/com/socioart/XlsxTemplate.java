@@ -20,6 +20,12 @@ public class XlsxTemplate
                 variable = _variable;
             }
         }
+        static class UnlessDirective extends Directive {
+            public String variable;
+            UnlessDirective(String _variable) {
+                variable = _variable;
+            }
+        }
         static class EachDirective extends Directive {
             public String variable;
             EachDirective(String _variable) {
@@ -29,6 +35,7 @@ public class XlsxTemplate
 
         private Pattern _pattern_variable;
         private Pattern _pattern_if;
+        private Pattern _pattern_unless;
         private Pattern _pattern_each;
         private XSSFWorkbook _template;
         private JSONObject _variables;
@@ -36,6 +43,7 @@ public class XlsxTemplate
         public Template() {
             _pattern_variable = Pattern.compile("\\{\\{(.*)\\}\\}");
             _pattern_if = Pattern.compile("\\{\\{#if (.*)\\}\\}");
+            _pattern_unless = Pattern.compile("\\{\\{#unless (.*)\\}\\}");
             _pattern_each = Pattern.compile("\\{\\{#each (.*)\\}\\}");
         }
 
@@ -85,6 +93,8 @@ public class XlsxTemplate
 
             if (directive instanceof IfDirective) {
                 return processIfDirectiveRow(sheet, row, (IfDirective)directive);
+            } else if (directive instanceof UnlessDirective) {
+                return processUnlessDirectiveRow(sheet, row, (UnlessDirective)directive);
             } else if (directive instanceof EachDirective) {
                 return processEachDirectiveRow(sheet, row, (EachDirective)directive);
             } else {
@@ -98,7 +108,16 @@ public class XlsxTemplate
         }
 
         private int processIfDirectiveRow(Sheet sheet, Row row, IfDirective directive) {
-            if (!isTruthy(((IfDirective)directive).variable, _variables)) {
+            if (!isTruthy(directive.variable, _variables)) {
+                removeRow(sheet, row);
+                return -1; // 削除したので -1
+            } else {
+                return processNoDirectiveRow(sheet, row);
+            }
+        }
+
+        private int processUnlessDirectiveRow(Sheet sheet, Row row, UnlessDirective directive) {
+            if (isTruthy(directive.variable, _variables)) {
                 removeRow(sheet, row);
                 return -1; // 削除したので -1
             } else {
@@ -110,7 +129,7 @@ public class XlsxTemplate
             int template_row_index = template_row.getRowNum();
             short template_row_height = template_row.getHeight();
 
-            JSONArray items = digArray(((EachDirective)directive).variable, _variables);
+            JSONArray items = digArray(directive.variable, _variables);
             int row_index = template_row_index;
 
             for(Object obj: items) {
@@ -281,6 +300,11 @@ public class XlsxTemplate
             m = _pattern_if.matcher(v);
             if (m.find()) {
                 return new IfDirective(toJSONPointer(m.group(1)));
+            }
+
+            m = _pattern_unless.matcher(v);
+            if (m.find()) {
+                return new UnlessDirective(toJSONPointer(m.group(1)));
             }
 
             m = _pattern_each.matcher(v);
